@@ -29,6 +29,9 @@ AUDIT_ACTIONS = {
     "RULE_BULK_RUN": "批量执行规则",
     "ISSUE_ASSIGN": "指派问题单",
     "ISSUE_STATUS": "流转问题单",
+    "KEY_CONFIG_SET": "配置业务主键",
+    "EXCEPTION_REGISTER": "登记例外",
+    "EXCEPTION_REVOKE": "撤销例外",
 }
 
 TASK_FAILURE_MESSAGES = {

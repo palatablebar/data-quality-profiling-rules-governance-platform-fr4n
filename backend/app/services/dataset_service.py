@@ -5,8 +5,19 @@ from sqlalchemy.orm import Session
 
 from app.config.settings import settings
 from app.constants.error_codes import AppError, ErrorCode
+from app.constants.exception_status import ExceptionStatus
 from app.log_helpers import audit_event  # noqa: F401  (re-exported for controllers)
-from app.models import ColumnProfile, Dataset, Issue, QualityRule, RuleRun, User
+from app.models import (
+    ColumnProfile,
+    Dataset,
+    DatasetKeyConfig,
+    ExceptionHit,
+    Issue,
+    QualityRule,
+    RuleException,
+    RuleRun,
+    User,
+)
 from app.profiling.loader import load_frame
 from app.schemas.dataset import serialize_dataset
 from app.utils import storage
@@ -36,12 +47,87 @@ def _open_issue_count(db: Session, dataset_id: int) -> int:
     )
 
 
+def _exception_counters(db: Session, dataset_ids: list[int]) -> dict[int, dict]:
+    """One grouped query per metric — keeps the dataset list free of N+1."""
+    counters: dict[int, dict] = {
+        dataset_id: {"suppressed": 0, "expired": 0, "pending": 0} for dataset_id in dataset_ids
+    }
+    if not dataset_ids:
+        return counters
+    active_rows = (
+        db.query(RuleException.dataset_id, func.count(RuleException.id))
+        .filter(
+            RuleException.dataset_id.in_(dataset_ids),
+            RuleException.status == ExceptionStatus.ACTIVE.value,
+        )
+        .group_by(RuleException.dataset_id)
+        .all()
+    )
+    expired_rows = (
+        db.query(RuleException.dataset_id, func.count(RuleException.id))
+        .filter(
+            RuleException.dataset_id.in_(dataset_ids),
+            RuleException.status == ExceptionStatus.EXPIRED.value,
+        )
+        .group_by(RuleException.dataset_id)
+        .all()
+    )
+    pending_rows = (
+        db.query(RuleRun.dataset_id, func.count(Issue.id))
+        .join(Issue, Issue.rule_run_id == RuleRun.id)
+        .filter(
+            RuleRun.dataset_id.in_(dataset_ids),
+            Issue.status.in_(["open", "triaged"]),
+            Issue.exception_id.isnot(None),
+        )
+        .group_by(RuleRun.dataset_id)
+        .all()
+    )
+    for dataset_id, count in active_rows:
+        counters[dataset_id]["suppressed"] = count
+    for dataset_id, count in expired_rows:
+        counters[dataset_id]["expired"] = count
+    for dataset_id, count in pending_rows:
+        counters[dataset_id]["pending"] = count
+    return counters
+
+
+def _key_columns_map(db: Session, dataset_ids: list[int]) -> dict[int, list[str]]:
+    if not dataset_ids:
+        return {}
+    configs = db.query(DatasetKeyConfig).filter(DatasetKeyConfig.dataset_id.in_(dataset_ids)).all()
+    return {config.dataset_id: list(config.key_columns_json) for config in configs}
+
+
+def serialize_many(db: Session, datasets: list[Dataset]) -> list[dict]:
+    dataset_ids = [dataset.id for dataset in datasets]
+    counters = _exception_counters(db, dataset_ids)
+    key_map = _key_columns_map(db, dataset_ids)
+    payload = []
+    for dataset in datasets:
+        payload.append(
+            serialize_dataset(
+                dataset,
+                profile_run=_profile_run(db, dataset.id),
+                rule_count=_rule_count(db, dataset.id),
+                open_issues=_open_issue_count(db, dataset.id),
+                key_columns=key_map.get(dataset.id),
+                exception_counts=counters.get(dataset.id),
+            )
+        )
+    return payload
+
+
 def serialize(db: Session, dataset: Dataset) -> dict:
+    config = db.query(DatasetKeyConfig).filter(DatasetKeyConfig.dataset_id == dataset.id).first()
+    counters = _exception_counters(db, [dataset.id]).get(dataset.id)
     return serialize_dataset(
         dataset,
         profile_run=_profile_run(db, dataset.id),
         rule_count=_rule_count(db, dataset.id),
         open_issues=_open_issue_count(db, dataset.id),
+        key_columns=list(config.key_columns_json) if config else [],
+        exception_counts=counters,
     )
 
 
@@ -141,6 +227,22 @@ def delete_dataset(db: Session, dataset: Dataset, actor: User) -> dict:
     before = {"id": dataset.id, "name": dataset.name}
     dataset.is_deleted = True
     dataset.status = "deleted"
+    # exception ledger rows reference both the dataset and its rules — clear them
+    # explicitly because bulk Query.delete() bypasses ORM cascade rules.
+    exception_ids = [
+        row[0]
+        for row in db.query(RuleException.id)
+        .filter(RuleException.dataset_id == dataset.id)
+        .all()
+    ]
+    if exception_ids:
+        db.query(ExceptionHit).filter(ExceptionHit.exception_id.in_(exception_ids)).delete(
+            synchronize_session=False
+        )
+        db.query(RuleException).filter(RuleException.id.in_(exception_ids)).delete(
+            synchronize_session=False
+        )
+    db.query(DatasetKeyConfig).filter(DatasetKeyConfig.dataset_id == dataset.id).delete()
     db.query(QualityRule).filter(QualityRule.dataset_id == dataset.id).delete()
     db.query(ColumnProfile).filter(ColumnProfile.dataset_id == dataset.id).delete()
     db.commit()

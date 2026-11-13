@@ -17,13 +17,23 @@ from datetime import date, datetime, timedelta
 
 from app.config.database import SessionLocal, init_db
 from app.config.settings import settings
+from app.constants.exception_status import ExceptionStatus
 from app.constants.issue_status import IssueStatus
 from app.constants.rule_run_status import RuleRunStatus
 from app.constants.rule_type import RuleType
 from app.constants.severity import Severity
-from app.models import ColumnProfile, Dataset, Issue, QualityRule, RuleRun, User
+from app.models import (
+    ColumnProfile,
+    Dataset,
+    DatasetKeyConfig,
+    Issue,
+    QualityRule,
+    RuleException,
+    RuleRun,
+    User,
+)
 from app.rules import engine
-from app.services import auth_service, profile_service
+from app.services import auth_service, exception_service, profile_service
 from app.utils import storage
 from app.utils.logger import log_event
 
@@ -241,6 +251,87 @@ def _ensure_history_run(db, dataset: Dataset, rules: list[QualityRule], actor: U
     return run
 
 
+def _ensure_key_config(db, dataset: Dataset, actor: User) -> DatasetKeyConfig:
+    existing = exception_service.get_key_config(db, dataset.id)
+    if existing is not None:
+        return existing
+    return exception_service.upsert_key_config(db, dataset, ["account_no"], actor)
+
+
+def _ensure_demo_exceptions(db, dataset: Dataset, rules: list[QualityRule], actor: User) -> int:
+    """Pre-approve a small, stable set of accepted legacy issues.
+
+    Idempotent on (rule_id, business_key): re-running the seed never creates a
+    second exception for the same account. Mixes one long-lived, one near-term
+    and one already-invalidated row so every dashboard bucket has data.
+    """
+    existing = db.query(RuleException).filter(RuleException.dataset_id == dataset.id).count()
+    if existing:
+        return existing
+
+    by_name = {rule.name: rule for rule in rules}
+    not_null_rule = by_name["证件号非空校验"]
+    range_rule = by_name["账户余额非负校验"]
+    enum_rule = by_name["账户状态枚举校验"]
+    today = date.today()
+    # empty cert_no rows are generated every 143 rows -> stay inside any SEED_ACCOUNT_ROWS
+    second_null_row = min(143, dataset.row_count - 1)
+
+    specs = [
+        # (rule, row_index, approver, basis, expire_date)
+        (not_null_rule, 0, "顾清和", "审计例会 2026-10 批复：存量账户证件号补录中，批次号 QC-EX-202610-01", None),
+        (not_null_rule, second_null_row, "顾清和", "监管报送例外台账 EX-0143，允许延期至本季末", today + timedelta(days=7)),
+        (range_rule, 777, "周砚秋", "历史呆账核销过渡账户，报审计备案 QC-EX-202610-07", None),
+    ]
+    created = 0
+    for rule, row_index, approver, basis, expire_date in specs:
+        if row_index >= dataset.row_count:
+            continue
+        exc, was_created = exception_service.register_exception(
+            db,
+            rule=rule,
+            row_index=row_index,
+            approval_basis=basis,
+            approver=approver,
+            expire_date=expire_date,
+            actor=actor,
+        )
+        if was_created:
+            created += 1
+
+    # an invalidated sample: mutate the stored snapshot so the exception is
+    # visibly lapsed without touching the generated source file
+    enum_issues = (
+        db.query(Issue)
+        .filter(Issue.rule_id == enum_rule.id)
+        .order_by(Issue.id.asc())
+        .all()
+    )
+    if enum_issues:
+        target = enum_issues[0]
+        exc, _ = exception_service.register_exception(
+            db,
+            rule=enum_rule,
+            row_index=target.row_index,
+            approval_basis="状态字典扩项审批中 EX-0202",
+            approver="周砚秋",
+            expire_date=today + timedelta(days=30),
+            actor=actor,
+        )
+        snapshot = dict(exc.snapshot_json or {})
+        snapshot["status"] = f"{snapshot.get('status', '')}#CHANGED"
+        exc.snapshot_json = snapshot
+        exception_service._close(
+            exc,
+            ExceptionStatus.INVALIDATED.value,
+            "演示：业务字段变化后旧例外自动失效",
+        )
+        db.commit()
+        created += 1
+    log_event("SEED_EXCEPTIONS_READY", dataset_id=dataset.id, created=created)
+    return created
+
+
 def run_seed() -> dict:
     init_db()
     storage.ensure_dirs()
@@ -269,6 +360,9 @@ def run_seed() -> dict:
         rules = _ensure_rules(db, account_dataset, steward)
         run = _ensure_history_run(db, account_dataset, rules, steward, analyst)
 
+        _ensure_key_config(db, account_dataset, steward)
+        exception_count = _ensure_demo_exceptions(db, account_dataset, rules, steward)
+
         datasets = db.query(Dataset).filter(Dataset.is_deleted.is_(False)).count()
         rule_count = db.query(QualityRule).count()
         run_count = db.query(RuleRun).filter(RuleRun.kind == "rules").count()
@@ -285,6 +379,7 @@ def run_seed() -> dict:
             "rules": rule_count,
             "runs": run_count,
             "issues": issue_count,
+            "exceptions": exception_count,
             "report_no": run.report_no,
             "profile_rows": account_dataset.row_count,
         }

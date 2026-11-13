@@ -20,6 +20,10 @@ export interface Dataset {
   uploaded_at: string | null
   rule_count: number
   open_issues: number
+  key_columns: string[]
+  exception_suppressed: number
+  exception_expired: number
+  exception_pending: number
   row_count_display: string
   last_profile: ProfileRunRef | null
 }

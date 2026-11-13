@@ -50,11 +50,23 @@
           </div>
         </div>
 
-        <div class="grid grid-cols-2 md:grid-cols-4 gap-x-8 gap-y-2 py-3 border-y border-rule">
+        <div class="grid grid-cols-2 md:grid-cols-6 gap-x-8 gap-y-2 py-3 border-y border-rule">
           <div><div class="label">规则</div><div class="text-[13px] tabular-nums">{{ runStore.detail.rules_total }}</div></div>
           <div><div class="label">通过 / 失败</div><div class="text-[13px] tabular-nums">{{ runStore.detail.rules_passed }} / {{ runStore.detail.rules_failed }}</div></div>
           <div><div class="label">扫描行数</div><div class="text-[13px] tabular-nums">{{ runStore.detail.rows_scanned_display }}</div></div>
-          <div><div class="label">违规样本</div><div class="text-[13px] tabular-nums">{{ runStore.detail.issue_count }}</div></div>
+          <div><div class="label">进待办样本</div><div class="text-[13px] tabular-nums">{{ runStore.detail.issue_count }}</div></div>
+          <div>
+            <div class="label">例外暂缓</div>
+            <div class="text-[13px] tabular-nums" style="color: var(--assay)">
+              {{ runStore.detail.exceptions_suppressed ?? 0 }}
+            </div>
+          </div>
+          <div>
+            <div class="label">到期恢复</div>
+            <div class="text-[13px] tabular-nums" style="color: var(--alert)">
+              {{ runStore.detail.exceptions_resumed ?? 0 }}
+            </div>
+          </div>
         </div>
 
         <RunProgressList class="mt-3" :items="runStore.detail.items" :run-status="runStore.detail.status" @drill="drill" />

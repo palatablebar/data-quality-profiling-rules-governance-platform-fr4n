@@ -8,6 +8,7 @@ export interface RunItem {
   passed: boolean
   violation_count: number
   persisted_count: number
+  suppressed_count: number
   duration_ms: number
   duration_display: string
   error_code: string | null
@@ -26,6 +27,8 @@ export interface RuleRun {
   rules_failed: number
   rows_scanned: number
   rows_scanned_display: string
+  exceptions_suppressed: number
+  exceptions_resumed: number
   duration_ms: number
   duration_display: string
   report_no: string | null

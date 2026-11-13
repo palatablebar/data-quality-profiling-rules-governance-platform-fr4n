@@ -14,6 +14,8 @@ export interface Issue {
   assignee_id: number | null
   assignee_name: string | null
   note: string | null
+  business_key: string | null
+  exception_id: number | null
   dataset_name: string | null
   report_no: string | null
   created_at: string | null

@@ -28,6 +28,12 @@ class Dataset(Base):
     profiles = relationship("ColumnProfile", back_populates="dataset", cascade="all, delete-orphan")
     rules = relationship("QualityRule", back_populates="dataset", cascade="all, delete-orphan")
     runs = relationship("RuleRun", back_populates="dataset", cascade="all, delete-orphan")
+    key_config = relationship(
+        "DatasetKeyConfig",
+        uselist=False,
+        back_populates="dataset",
+        cascade="all, delete-orphan",
+    )
 
     def __repr__(self) -> str:  # pragma: no cover
         return f"<Dataset {self.name} rows={self.row_count}>"

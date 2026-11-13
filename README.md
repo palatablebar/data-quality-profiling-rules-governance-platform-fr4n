@@ -23,7 +23,7 @@ docker compose up -d
 docker compose exec backend python -m scripts.seed_demo
 ```
 
-重复执行不会出现第二份 `cust_account_202611.csv`、不会重复插入同名规则与重复批次（dataset 按 `(name, owner_id)`、rule 按 `(dataset_id, name)`、历史批次按 `report_no` upsert）。
+重复执行不会出现第二份 `cust_account_202611.csv`、不会重复插入同名规则与重复批次（dataset 按 `(name, owner_id)`、rule 按 `(dataset_id, name)`、历史批次按 `report_no` upsert）。演示数据还会为客户账户表指定业务主键 `account_no`，并预置 4 条审批例外（长期有效、临期、已失效各态），例外按 `(rule_id, business_key)` 幂等，重复执行 seed 不会产生第二份。
 
 `SEED_DEMO=false` 启动的是一个空库版本（只有表结构与空目录），适合干净环境演示对比。
 
@@ -46,6 +46,7 @@ docker compose exec backend python -m scripts.seed_demo
 - **列级剖析**：`profiling/loader.py` 读 CSV/Parquet/JSONL/XLSX（重复列名 400、非 UTF-8 400、超行数 400）；`type_infer.py` 抽样 1 万行按命中率 ≥0.95 判类型；`stats.py` 全量算空值率/基数/分位/Top 值；`pattern.py` 字符类归并推断正则与命中率；`outliers.py` IQR 1.5 倍异常值。
 - **规则构建与批量执行**：7 种 `RuleType` 各自独立校验器，pandas 向量化定位 + 逐条保留 `row_index` 与原文 `observed_value`，每规则最多落 `sample_limit` 条 Issue 但统计值记真实数量；违规行同时写入隔离卷 `run_XXXXXX_quarantine.csv`。
 - **问题分诊与指派**：状态机 `open → triaged → fixed/ignored`，支持按严重度/状态/规则筛选、批量指派、复制复现片段。
+- **业务主键与审批例外**：每个数据集可指定一列或多列业务主键（剖析报告单页配置）；例外按「规则 + 主键值」登记，留存审批依据、审批人与截止日期。扫描照实记录：命中**有效例外**的违规行只写 `exception_hits` 不进待办；超过截止日期、登记快照中的业务字段发生变化、或人工撤销后，例外自动失效，下次扫描命中即恢复为待办 Issue。同一主键重复运行不新增例外（唯一约束 `(rule_id, business_key)`，失效后重新审批复用同一行）。`/exceptions` 台账页同时给出**暂缓 / 到期恢复 / 待处理**三个数量，例外详情可查全部历史命中。
 - **审计与配额**：写操作在响应阶段写入 `audit_logs`（before/after 快照）；`users.daily_scan_quota` + Redis 滑动窗口 + `SETNX runlock:{dataset_id}` 保证同一数据集不并行执行，超限 429 并带 `retry_after`。
 
 ## 技术栈
@@ -54,7 +55,7 @@ docker compose exec backend python -m scripts.seed_demo
 |---|---|
 | 前端 | Vue 3.4 + TypeScript 5 + Vite 5 + Pinia + Tailwind CSS 3.4（oklch token） |
 | 后端 | Python 3.11 + FastAPI + SQLAlchemy 2.0 + Pydantic v2 + Alembic |
-| 数据库 | MySQL 8.0（utf8mb4，JSON 列存 params/top_values，`null_rate` DECIMAL(6,4)） |
+| 数据库 | MySQL 8.0（utf8mb4，JSON 列存 params/top_values/snapshot，`null_rate` DECIMAL(6,4)） |
 | 队列 | Celery 5 + Redis 7（剖析与规则执行在 worker 内完成） |
 | 统计 | pandas 2.2 + numpy 2.1（分位、IQR、向量化违规定位） |
 
@@ -144,7 +145,12 @@ cd backend && celery -A app.config.celery_app worker -l info
 ### IssueStatus（open/triaged/fixed/ignored）
 
 - 前端：`constants/issueStatus.ts`（定义 + 标签）、`types/issue.ts`、`components/issue/IssueStatusMenu.vue`（状态按钮组）、`components/issue/IssueDrawer.vue`、`components/issue/IssueFilterBar.vue`、`stores/issueStore.ts`、`pages/IssuesPage.vue`（列分组）
-- 后端：`app/constants/issue_status.py`（定义 + 状态机 TRANSITIONS）、`services/issue_service.py`（流转校验）、`rules/engine.py`（新建 open）、`rules/engine.py#recheck_open_issues`（收敛转 fixed）、`models/issue.py`、`scripts/seed_demo.py`（triaged 预置）
+- 后端：`app/constants/issue_status.py`（定义 + 状态机 TRANSITIONS）、`services/issue_service.py`（流转校验）、`rules/engine.py`（新建 open）、`rules/engine.py#recheck_open_issues`（收敛转 fixed，优先按业务主键匹配）、`models/issue.py`（business_key/exception_id）、`scripts/seed_demo.py`（triaged 预置）
+
+### ExceptionStatus（active/expired/invalidated/revoked）
+
+- 前端：`constants/exceptionStatus.ts`（定义 + 标签 + 配色）、`types/exception.ts`、`api/exception.ts`、`stores/exceptionStore.ts`、`components/exception/*`（状态徽标、登记抽屉、详情抽屉含历史命中）、`pages/ExceptionsPage.vue`（暂缓/到期恢复/待处理三数量）、`components/dataset/KeyConfigPanel.vue`（业务主键配置）、`components/issue/IssueDrawer.vue`（登记入口）
+- 后端：`app/constants/exception_status.py`（定义 + 有效期判定）、`services/exception_service.py`（主键渲染、快照比对、扫描期分类、登记/撤销/统计）、`rules/engine.py#classify_violation`（命中抑制/恢复）、`models/{dataset_key_config,rule_exception,exception_hit}.py`、`models/issue.py`（business_key/exception_id）、`routes/exception.py` + `controllers/exception_controller.py` + `schemas/exception.py`、`alembic/versions/20261113_0002_exceptions.py`
 
 ### RuleRunStatus（queued/running/succeeded/failed）
 

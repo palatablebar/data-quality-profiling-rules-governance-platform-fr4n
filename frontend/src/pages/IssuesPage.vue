@@ -34,8 +34,9 @@
           <th class="w-[24px]"><input type="checkbox" :checked="allSelected" @change="toggleAll" /></th>
           <th class="w-[60px]">严重度</th>
           <th>规则 / 列</th>
+          <th class="w-[120px]">业务主键</th>
           <th class="w-[70px] text-right">row_index</th>
-          <th class="w-[200px]">observed_value</th>
+          <th class="w-[180px]">observed_value</th>
           <th class="w-[92px]">状态</th>
           <th class="w-[96px]">跟进人</th>
           <th class="w-[70px]"></th>
@@ -48,6 +49,13 @@
           <td>
             <div class="text-[12px]">{{ issue.rule_name ?? '-' }}</div>
             <div class="text-[10.5px] text-ink-soft">{{ issue.column_name }}</div>
+          </td>
+          <td class="text-[11px] tabular-nums break-all">
+            <span v-if="issue.business_key">{{ issue.business_key }}</span>
+            <span v-else class="text-ink-soft">—</span>
+            <div v-if="issue.exception_id" class="text-[10px] mt-0.5" style="color: var(--alert-deep)">
+              例外恢复 #{{ issue.exception_id }}
+            </div>
           </td>
           <td class="num">{{ issue.row_index }}</td>
           <td class="tabular-nums text-[11.5px] break-all">
@@ -79,6 +87,7 @@
       :users="issueStore.users"
       @close="issueStore.select(null)"
       @update="onUpdate"
+      @exception-registered="onExceptionRegistered"
     />
     <ActivityTrail />
   </div>
@@ -149,6 +158,11 @@ async function open(issue: Issue) {
 async function onUpdate(payload: { status?: string; assignee_id?: number | null; note?: string }) {
   if (!issueStore.selected) return
   await issueStore.update(issueStore.selected.id, payload)
+}
+
+async function onExceptionRegistered() {
+  // the issue stays on the board until the next scan suppresses it; refresh counters
+  await issueStore.load()
 }
 
 async function assignSelected() {

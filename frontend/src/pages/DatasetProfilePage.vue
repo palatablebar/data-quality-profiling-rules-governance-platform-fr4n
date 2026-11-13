@@ -27,6 +27,8 @@
 
       <ColumnTable :columns="payload.columns" @pick="pickColumn" />
 
+      <KeyConfigPanel :dataset-id="payload.dataset.id" @saved="load(payload.dataset.id)" />
+
       <section v-if="payload.recommendations.length" class="mt-8">
         <div class="flex items-baseline justify-between border-t border-rule pt-3">
           <div class="eyebrow">从剖析结果推荐</div>
@@ -65,6 +67,7 @@ import { computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import PageHeader from '../components/common/PageHeader.vue'
 import ColumnTable from '../components/profile/ColumnTable.vue'
+import KeyConfigPanel from '../components/dataset/KeyConfigPanel.vue'
 import QuotaMeter from '../components/common/QuotaMeter.vue'
 import ErrorNotice from '../components/common/ErrorNotice.vue'
 import EmptyState from '../components/common/EmptyState.vue'

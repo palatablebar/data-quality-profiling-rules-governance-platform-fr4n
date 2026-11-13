@@ -20,6 +20,12 @@ class Issue(Base):
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="open", index=True)
     assignee_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # set when the row was raised because a registered exception had lapsed
+    exception_id: Mapped[int | None] = mapped_column(
+        ForeignKey("rule_exceptions.id"), nullable=True, index=True
+    )
+    # business primary key value rendered at scan time, for stable cross-run identity
+    business_key: Mapped[str | None] = mapped_column(String(500), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     run = relationship("RuleRun", back_populates="issues")

@@ -4,9 +4,18 @@ from app.config.database import SessionLocal
 from app.constants.rule_run_status import RuleRunStatus
 from app.middlewares import quota
 from app.models import Dataset, QualityRule, RuleRun
+from app.profiling.loader import load_frame
 from app.rules import engine
+from app.services import exception_service
 from app.utils.logger import log_event
 from app.constants.messages import TASK_FAILURE_MESSAGES
+
+
+def _dataset_key_map(db, dataset: Dataset, df) -> dict[str, int]:
+    config = exception_service.get_key_config(db, dataset.id)
+    if config is None:
+        return {}
+    return exception_service.build_dataset_key_map(df, list(config.key_columns_json))
 
 
 @celery_app.task(name="qualiscope.execute_rules", bind=True, max_retries=0)
@@ -27,7 +36,15 @@ def execute_rules(self, run_id: int, rule_ids: list[int]) -> dict:
         )
         try:
             summary = engine.execute_batch(db, run, dataset, rules, triggered_by=run.triggered_by)
-            engine.recheck_open_issues(db, dataset_id, run.id, summary["violations_by_rule"])
+            loaded = load_frame(dataset.file_path, dataset.source_format)
+            key_map = _dataset_key_map(db, dataset, loaded.df)
+            engine.recheck_open_issues(
+                db,
+                dataset_id,
+                run.id,
+                summary["violations_by_rule"],
+                business_key_map=key_map,
+            )
         except Exception as exc:  # pragma: no cover - worker-side failure path
             code = getattr(exc, "code", "QUAL-5000")
             run.status = RuleRunStatus.FAILED.value
@@ -40,7 +57,10 @@ def execute_rules(self, run_id: int, rule_ids: list[int]) -> dict:
                 reason=TASK_FAILURE_MESSAGES["RUN_FAILED"].format(reason=str(exc)),
             )
             raise
-        return {"ok": True, **{k: v for k, v in summary.items() if k != "violations_by_rule"}}
+        return {
+            "ok": True,
+            **{k: v for k, v in summary.items() if k != "violations_by_rule"},
+        }
     finally:
         if dataset_id is not None:
             quota.release_dataset_lock(dataset_id)

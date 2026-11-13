@@ -26,12 +26,16 @@
           <RouterLink to="/issues" class="rail-link" active-class="active">
             <span>问题分诊板</span><span class="text-[11px]">{{ issueTotal }}</span>
           </RouterLink>
+          <RouterLink to="/exceptions" class="rail-link" active-class="active">
+            <span>例外审批台账</span><span class="text-[11px]">{{ exceptionTotal }}</span>
+          </RouterLink>
         </template>
         <template v-else>
           <RouterLink to="/datasets" class="rail-link !justify-center !px-0" active-class="active" title="数据集">数</RouterLink>
           <RouterLink to="/rules" class="rail-link !justify-center !px-0" active-class="active" title="规则">规</RouterLink>
           <RouterLink to="/runs" class="rail-link !justify-center !px-0" active-class="active" title="批次">批</RouterLink>
           <RouterLink to="/issues" class="rail-link !justify-center !px-0" active-class="active" title="问题">诊</RouterLink>
+          <RouterLink to="/exceptions" class="rail-link !justify-center !px-0" active-class="active" title="例外">例</RouterLink>
         </template>
       </nav>
 
@@ -65,6 +69,7 @@ import { useDatasetStore } from '../../stores/datasetStore'
 import { useRuleStore } from '../../stores/ruleStore'
 import { useRunStore } from '../../stores/runStore'
 import { fetchIssueSummary } from '../../api/issue'
+import { fetchExceptionSummary } from '../../api/exception'
 import QuotaMeter from './QuotaMeter.vue'
 
 const collapsed = ref(false)
@@ -74,6 +79,7 @@ const ruleStore = useRuleStore()
 const runStore = useRunStore()
 const router = useRouter()
 const issueTotal = ref(0)
+const exceptionTotal = ref(0)
 
 const quota = computed(() => runStore.quota)
 const roleLabel = computed(() => ROLE_LABELS[auth.role] ?? auth.role)
@@ -86,6 +92,12 @@ onMounted(async () => {
     issueTotal.value = summary.total
   } catch {
     issueTotal.value = 0
+  }
+  try {
+    const summary = await fetchExceptionSummary(null)
+    exceptionTotal.value = summary.total
+  } catch {
+    exceptionTotal.value = 0
   }
 })
 

@@ -46,6 +46,8 @@ def serialize_issue(issue, rule=None, assignee=None, run=None) -> dict:
         "assignee_id": issue.assignee_id,
         "assignee_name": assignee.display_name if assignee else None,
         "note": issue.note,
+        "business_key": getattr(issue, "business_key", None),
+        "exception_id": getattr(issue, "exception_id", None),
         "dataset_name": dataset_name,
         "report_no": report_no,
         "created_at": iso(issue.created_at),

@@ -26,6 +26,12 @@ class ErrorCode(str, Enum):
     # auth-layer additions (not part of the data-quality catalogue)
     FORBIDDEN = "QUAL-2015"
     UNAUTHORIZED = "QUAL-2016"
+    # exception / business-key catalogue
+    EXCEPTION_NOT_FOUND = "QUAL-2017"
+    EXCEPTION_KEY_MISSING = "QUAL-2018"
+    EXCEPTION_NOT_ACTIVE = "QUAL-2019"
+    EXCEPTION_ROW_INVALID = "QUAL-2020"
+    KEY_CONFIG_INVALID = "QUAL-2021"
 
 
 ERROR_MESSAGES = {
@@ -45,6 +51,11 @@ ERROR_MESSAGES = {
     ErrorCode.ISSUE_CLOSED: "问题单已关闭，无法再流转",
     ErrorCode.FORBIDDEN: "当前角色无权执行该操作",
     ErrorCode.UNAUTHORIZED: "未登录或登录已过期",
+    ErrorCode.EXCEPTION_NOT_FOUND: "例外记录不存在",
+    ErrorCode.EXCEPTION_KEY_MISSING: "数据集尚未配置业务主键",
+    ErrorCode.EXCEPTION_NOT_ACTIVE: "例外不在有效状态",
+    ErrorCode.EXCEPTION_ROW_INVALID: "登记行不可用于例外",
+    ErrorCode.KEY_CONFIG_INVALID: "业务主键配置非法",
 }
 
 ERROR_STATUS = {
@@ -64,6 +75,11 @@ ERROR_STATUS = {
     ErrorCode.ISSUE_CLOSED: 409,
     ErrorCode.FORBIDDEN: 403,
     ErrorCode.UNAUTHORIZED: 401,
+    ErrorCode.EXCEPTION_NOT_FOUND: 404,
+    ErrorCode.EXCEPTION_KEY_MISSING: 409,
+    ErrorCode.EXCEPTION_NOT_ACTIVE: 409,
+    ErrorCode.EXCEPTION_ROW_INVALID: 400,
+    ErrorCode.KEY_CONFIG_INVALID: 400,
 }
 
 

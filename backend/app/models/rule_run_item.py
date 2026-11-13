@@ -19,6 +19,8 @@ class RuleRunItem(Base):
     passed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     violation_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     persisted_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # sampled violating rows held back by an active approved exception
+    suppressed_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     duration_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     error_code: Mapped[str | None] = mapped_column(String(24), nullable=True)
 

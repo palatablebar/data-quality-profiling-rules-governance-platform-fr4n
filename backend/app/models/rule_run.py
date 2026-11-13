@@ -23,6 +23,9 @@ class RuleRun(Base):
     rules_passed: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     rules_failed: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     rows_scanned: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # sampled rows held back by active exceptions vs. re-raised after an exception lapsed
+    exceptions_suppressed: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    exceptions_resumed: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     duration_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     report_no: Mapped[str | None] = mapped_column(String(40), nullable=True)
     error_code: Mapped[str | None] = mapped_column(String(24), nullable=True)

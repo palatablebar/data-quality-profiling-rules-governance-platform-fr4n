@@ -17,10 +17,11 @@ from app.constants.issue_status import IssueStatus
 from app.constants.rule_run_status import RuleRunStatus
 from app.constants.rule_type import RuleType
 from app.constants.severity import Severity
-from app.models import Dataset, Issue, QualityRule, RuleRun, RuleRunItem
+from app.models import Dataset, ExceptionHit, Issue, QualityRule, RuleException, RuleRun, RuleRunItem
 from app.profiling.loader import load_frame
 from app.rules.base import RuleContext, RuleResult
 from app.rules.registry import get_checker
+from app.services import exception_service
 from app.utils import storage
 from app.utils.formatters import rule_param_summary
 from app.utils.logger import log_event
@@ -86,6 +87,13 @@ def execute_batch(
     violations_by_rule: dict[int, set[int]] = {}
     quarantine_indexes: set[int] = set()
 
+    # business-key + approved exceptions decide whether a violating row becomes an Issue
+    key_config = exception_service.get_key_config(db, dataset.id)
+    key_columns = list(key_config.key_columns_json) if key_config else []
+    exception_index = exception_service.build_exception_index(db, [rule.id for rule in rules])
+    total_suppressed = 0
+    total_resumed = 0
+
     for rule in rules:
         rule_started = time.perf_counter()
         item = RuleRunItem(
@@ -98,6 +106,7 @@ def execute_batch(
             passed=True,
             violation_count=0,
             persisted_count=0,
+            suppressed_count=0,
             duration_ms=0,
         )
         result = RuleResult(violation_count=0, samples=[], expected="")
@@ -135,19 +144,57 @@ def execute_batch(
                 log_event("RUN_FAILED", run_id=run.id, error_code=error_code, reason=str(exc))
 
         persisted = 0
+        suppressed = 0
+        resumed = 0
         if error_code is None:
             for row_index, observed, expected in result.samples:
-                db.add(
-                    Issue(
-                        rule_run_id=run.id,
-                        rule_id=rule.id,
+                decision = {"kind": "issue", "business_key": None, "exception": None}
+                if key_config is not None:
+                    decision = exception_service.classify_violation(
+                        db,
+                        df=df,
+                        rule=rule,
+                        run=run,
                         row_index=row_index,
-                        column_name=rule.column_name,
-                        observed_value=observed[:2000],
-                        expected_expr=expected[:2000],
-                        status=IssueStatus.OPEN.value,
+                        observed=observed,
+                        key_config=key_config,
+                        exception_index=exception_index,
                     )
+
+                if decision["kind"] == "suppressed":
+                    suppressed += 1
+                    continue
+
+                issue = Issue(
+                    rule_run_id=run.id,
+                    rule_id=rule.id,
+                    row_index=row_index,
+                    column_name=rule.column_name,
+                    observed_value=observed[:2000],
+                    expected_expr=expected[:2000],
+                    status=IssueStatus.OPEN.value,
+                    business_key=decision["business_key"],
+                    exception_id=(
+                        decision["exception"].id if decision["exception"] is not None else None
+                    ),
                 )
+                db.add(issue)
+                db.flush()
+                if decision["exception"] is not None:
+                    resumed += 1
+                    # link the history row to the issue that replaced the suppression
+                    latest_hit = (
+                        db.query(ExceptionHit)
+                        .filter(
+                            ExceptionHit.exception_id == decision["exception"].id,
+                            ExceptionHit.run_id == run.id,
+                            ExceptionHit.suppressed.is_(False),
+                        )
+                        .order_by(ExceptionHit.id.desc())
+                        .first()
+                    )
+                    if latest_hit is not None and latest_hit.issue_id is None:
+                        latest_hit.issue_id = issue.id
                 persisted += 1
             quarantine_indexes.update(
                 row_index for row_index, _, _ in result.samples[:QUARANTINE_ROW_LIMIT]
@@ -155,12 +202,17 @@ def execute_batch(
             violations_by_rule[rule.id] = result.violated_rows
             item.passed = result.violation_count == 0
             item.violation_count = result.violation_count
+            item.suppressed_count = suppressed
+            total_suppressed += suppressed
+            total_resumed += resumed
             log_event(
                 "AUDIT_ISSUE_GENERATED",
                 run_id=run.id,
                 rule_id=rule.id,
                 violations=result.violation_count,
                 persisted=persisted,
+                suppressed=suppressed,
+                resumed=resumed,
             )
         item.persisted_count = persisted
         item.duration_ms = int((time.perf_counter() - rule_started) * 1000)
@@ -177,6 +229,7 @@ def execute_batch(
             column=rule.column_name,
             passed=item.passed,
             violations=item.violation_count,
+            suppressed=suppressed,
             duration_ms=item.duration_ms,
         )
 
@@ -188,6 +241,8 @@ def execute_batch(
 
     run.rules_passed = passed
     run.rules_failed = failed
+    run.exceptions_suppressed = total_suppressed
+    run.exceptions_resumed = total_resumed
     run.duration_ms = int((time.perf_counter() - started) * 1000)
     run.status = RuleRunStatus.SUCCEEDED.value
     run.finished_at = datetime.now()
@@ -208,6 +263,8 @@ def execute_batch(
         "rules_passed": passed,
         "rules_failed": failed,
         "rows_scanned": loaded.row_count,
+        "exceptions_suppressed": total_suppressed,
+        "exceptions_resumed": total_resumed,
         "duration_ms": run.duration_ms,
     }
 
@@ -217,8 +274,14 @@ def recheck_open_issues(
     dataset_id: int,
     current_run_id: int,
     violations_by_rule: dict[int, set[int]],
+    business_key_map: dict[str, int] | None = None,
 ) -> int:
-    """After a re-run: previously open issue rows that no longer violate turn `fixed`."""
+    """After a re-run: previously open issue rows that no longer violate turn `fixed`.
+
+    Matching prefers the rendered business key (stable across a data re-shuffle)
+    and falls back to ``row_index`` for datasets without a key config. The key
+    map is dataset-level (key columns do not vary per rule).
+    """
     fixed = 0
     open_issues = (
         db.query(Issue)
@@ -236,7 +299,15 @@ def recheck_open_issues(
         violated = violations_by_rule.get(issue.rule_id)
         if violated is None:
             continue
-        if issue.row_index not in violated:
+        still_violates = issue.row_index in violated
+        # business key takes precedence when the same key still exists in the frame
+        if business_key_map is not None and issue.business_key is not None:
+            current_index = business_key_map.get(issue.business_key)
+            if current_index is None:
+                still_violates = False
+            else:
+                still_violates = current_index in violated
+        if not still_violates:
             issue.status = IssueStatus.FIXED.value
             issue.note = (issue.note or "") + f"[recheck run#{current_run_id} 已收敛]"
             fixed += 1

@@ -10,6 +10,7 @@ from app.profiling.loader import load_frame
 from app.rules import engine
 from app.rules.base import RuleContext
 from app.rules.registry import get_checker
+from app.services import exception_service
 from app.utils.logger import log_event
 
 
@@ -41,7 +42,15 @@ def recheck_issues(self, run_id: int) -> dict:
                 ctx.target_values = engine.load_target_values(db, ctx.params)
             result = get_checker(rule.rule_type)(ctx)
             violations[rule.id] = result.violated_rows
-        fixed = engine.recheck_open_issues(db, dataset.id, run_id, violations)
+        key_map: dict[str, int] = {}
+        config = exception_service.get_key_config(db, dataset.id)
+        if config is not None:
+            key_map = exception_service.build_dataset_key_map(
+                loaded.df, list(config.key_columns_json)
+            )
+        fixed = engine.recheck_open_issues(
+            db, dataset.id, run_id, violations, business_key_map=key_map
+        )
         return {"ok": True, "fixed": fixed}
     except Exception as exc:  # pragma: no cover
         log_event("AUDIT_ISSUE_RECHECK", run_id=run_id, fixed_count=0, remaining=-1)

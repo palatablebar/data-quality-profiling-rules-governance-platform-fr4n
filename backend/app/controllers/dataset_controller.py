@@ -12,7 +12,7 @@ from app.services import dataset_service, profile_service, run_service
 def list_datasets(db: Session, user: User) -> dict:
     datasets = dataset_service.list_datasets(db)
     return {
-        "items": [dataset_service.serialize(db, dataset) for dataset in datasets],
+        "items": dataset_service.serialize_many(db, datasets),
         "total": len(datasets),
         "quota": quota_snapshot(user),
     }

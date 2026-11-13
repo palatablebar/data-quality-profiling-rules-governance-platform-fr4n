@@ -20,6 +20,16 @@
             <dl class="grid grid-cols-2 gap-x-6 gap-y-3">
               <div><dt class="label">列名</dt><dd class="text-[12.5px] tabular-nums mt-0.5">{{ issue.column_name }}</dd></div>
               <div><dt class="label">row_index</dt><dd class="text-[12.5px] tabular-nums mt-0.5">{{ issue.row_index }}</dd></div>
+              <div v-if="issue.business_key" class="col-span-2">
+                <dt class="label">业务主键</dt>
+                <dd class="text-[12.5px] tabular-nums mt-0.5 break-all">{{ issue.business_key }}</dd>
+              </div>
+              <div v-if="issue.exception_id" class="col-span-2">
+                <dt class="label">例外来源</dt>
+                <dd class="text-[11.5px] mt-0.5" style="color: var(--alert-deep)">
+                  由已失效/到期例外 #{{ issue.exception_id }} 恢复待办
+                </dd>
+              </div>
               <div class="col-span-2">
                 <dt class="label">observed_value</dt>
                 <dd class="text-[13px] tabular-nums mt-0.5 break-all">
@@ -38,7 +48,15 @@
             <div class="mt-5">
               <div class="label mb-1">复现片段</div>
               <pre class="border border-rule bg-paper-2 px-3 py-2 text-[11.5px] tabular-nums whitespace-pre-wrap">{{ issue.repro_snippet }}</pre>
-              <button class="btn mt-2 !py-1" @click="copySnippet">{{ copied ? '已复制' : '复制复现片段' }}</button>
+              <div class="mt-2 flex gap-2 items-center flex-wrap">
+                <button class="btn !py-1" @click="copySnippet">{{ copied ? '已复制' : '复制复现片段' }}</button>
+                <button v-if="canWrite && issue.business_key" class="btn btn-solid !py-1" @click="registerOpen = true">
+                  登记为例外
+                </button>
+                <span v-else-if="canWrite" class="text-[10.5px]" style="color: var(--alert-deep)">
+                  该数据集尚未指定业务主键，请到剖析报告单配置后再登记例外
+                </span>
+              </div>
             </div>
 
             <div class="mt-6">
@@ -71,6 +89,13 @@
         </aside>
       </div>
     </Transition>
+
+    <ExceptionRegisterDrawer
+      :open="registerOpen"
+      :issue="issue"
+      @close="registerOpen = false"
+      @registered="$emit('exception-registered')"
+    />
   </Teleport>
 </template>
 
@@ -78,7 +103,9 @@
 import { ref } from 'vue'
 import SeverityBadge from '../common/SeverityBadge.vue'
 import IssueStatusMenu from './IssueStatusMenu.vue'
+import ExceptionRegisterDrawer from '../exception/ExceptionRegisterDrawer.vue'
 import { ISSUE_STATUS_LABELS } from '../../constants/issueStatus'
+import { useAuthStore } from '../../stores/authStore'
 import type { Issue } from '../../types/issue'
 import type { User } from '../../types/user'
 
@@ -86,8 +113,12 @@ const props = defineProps<{ issue: Issue | null; users: User[] }>()
 const emit = defineEmits<{
   close: []
   update: [payload: { status?: string; assignee_id?: number | null; note?: string }]
+  'exception-registered': []
 }>()
+const auth = useAuthStore()
+const canWrite = auth.canWrite
 const copied = ref(false)
+const registerOpen = ref(false)
 
 function onAssign(event: Event) {
   const value = (event.target as HTMLSelectElement).value

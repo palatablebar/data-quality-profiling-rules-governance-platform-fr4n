@@ -27,6 +27,9 @@
             <th class="w-[60px] text-right">列数</th>
             <th class="w-[70px] text-right">规则</th>
             <th class="w-[84px] text-right">待处理</th>
+            <th class="w-[76px] text-right">暂缓</th>
+            <th class="w-[76px] text-right">到期恢复</th>
+            <th class="w-[110px]">业务主键</th>
             <th class="w-[150px]">上传时间</th>
             <th class="w-[170px]"></th>
           </tr>
@@ -43,10 +46,17 @@
             <td class="num">{{ dataset.column_count }}</td>
             <td class="num">{{ dataset.rule_count }}</td>
             <td class="num">{{ dataset.open_issues }}</td>
+            <td class="num" style="color: var(--assay)">{{ dataset.exception_suppressed }}</td>
+            <td class="num" style="color: var(--alert)">{{ dataset.exception_pending }}</td>
+            <td class="text-[10.5px] text-ink-soft break-all">
+              <span v-if="dataset.key_columns.length">{{ dataset.key_columns.join(' | ') }}</span>
+              <span v-else>未指定</span>
+            </td>
             <td class="text-[11.5px] tabular-nums text-ink-soft">{{ dataset.uploaded_at }}</td>
             <td class="text-right whitespace-nowrap">
               <RouterLink :to="`/datasets/${dataset.id}/profile`" class="link-button text-[11px] mr-3">剖析报告单</RouterLink>
               <RouterLink :to="`/rules?dataset=${dataset.id}`" class="link-button text-[11px] mr-3">规则</RouterLink>
+              <RouterLink :to="`/exceptions?dataset=${dataset.id}`" class="link-button text-[11px] mr-3">例外</RouterLink>
               <button v-if="auth.isSteward" class="link-button text-[11px]" :style="{ color: 'var(--alert-deep)' }" @click="askDelete(dataset)">
                 删除
               </button>
@@ -103,6 +113,10 @@ const meta = computed(() => [
   { label: '总行数', value: formatInt(datasetStore.items.reduce((sum, item) => sum + item.row_count, 0)) },
   { label: '规则', value: String(datasetStore.items.reduce((sum, item) => sum + item.rule_count, 0)) },
   { label: '待处理问题', value: String(datasetStore.items.reduce((sum, item) => sum + item.open_issues, 0)) },
+  {
+    label: '暂缓例外',
+    value: String(datasetStore.items.reduce((sum, item) => sum + item.exception_suppressed, 0)),
+  },
 ])
 
 onMounted(() => datasetStore.load())

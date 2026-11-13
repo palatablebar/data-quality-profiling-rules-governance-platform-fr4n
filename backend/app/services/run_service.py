@@ -183,6 +183,8 @@ def build_report(db: Session, run: RuleRun) -> dict:
             "rules_failed": run.rules_failed,
             "issue_count": len(issues),
             "rows_scanned": run.rows_scanned,
+            "exceptions_suppressed": getattr(run, "exceptions_suppressed", 0) or 0,
+            "exceptions_resumed": getattr(run, "exceptions_resumed", 0) or 0,
         },
     }
 

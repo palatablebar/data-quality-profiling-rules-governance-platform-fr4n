@@ -19,7 +19,12 @@
         <template v-if="item.error_code">
           <span :style="{ color: 'var(--alert-deep)' }">{{ item.error_code }}</span>
         </template>
-        <template v-else>{{ item.violation_count }} 违规</template>
+        <template v-else>
+          {{ item.violation_count }} 违规
+          <span v-if="item.suppressed_count > 0" class="block text-[9.5px]" style="color: var(--assay)">
+            暂缓 {{ item.suppressed_count }}
+          </span>
+        </template>
       </span>
       <span class="text-[10.5px] text-ink-soft tabular-nums w-[62px] text-right shrink-0">{{ item.duration_display }}</span>
       <button v-if="!item.passed && !item.error_code" class="link-button text-[11px] ml-auto shrink-0" @click="$emit('drill', item)">
